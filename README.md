@@ -1,10 +1,10 @@
 # Streamserver
 
 ## Usage
-Running Streamserver as a server in the background with the `-b` flag will fetch
-Twitch and Strims data every refresh interval (`-r`), and then serve this data
-at the specified address (`-a`). The address should match the one set as the
-callback URI in your [Twitch project](https://dev.twitch.tv)
+Running Streamserver as a server in the background will fetch Twitch (and
+Strims, if enabled) data every refresh interval (`-r`), and then serve this
+data at the specified address (`-a`). The address should match the one set
+as the callback URI in your [Twitch project](https://dev.twitch.tv)
 
 You can also set up callbacks for when streams go online or offline using
 `srv.SetLiveCallback()` and `srv.SetOfflineCallback()` in `main.go`
