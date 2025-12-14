@@ -39,7 +39,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(
 			flag.CommandLine.Output(),
-			"Usage: %s [-b] [-a=ADDRESS] [-r=DURATION] [-u=false]\n",
+			"Usage: %s [-a=ADDRESS] [-r=DURATION] [-u=false]\n",
 			os.Args[0],
 		)
 		flag.PrintDefaults()
