@@ -12,4 +12,4 @@ FROM alpine:latest
 
 COPY --from=builder /app/streamserver .
 EXPOSE 8181
-ENTRYPOINT ["./streamserver", "-a", "0.0.0.0:8181", "-b", "-e", "https://streams.hoppenr.xyz/oauth-callback"]
+ENTRYPOINT ["./streamserver", "-a", "0.0.0.0:8181", "-e", "https://streams.hoppenr.xyz/oauth-callback"]
