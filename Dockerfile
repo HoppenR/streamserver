@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM docker.io/library/golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ RUN go mod download
 COPY *.go ./
 RUN GOOS=linux go build .
 
-FROM alpine:latest
+FROM docker.io/library/alpine:latest
 
 COPY --from=builder /app/streamserver .
 EXPOSE 8181
