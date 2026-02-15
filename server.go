@@ -235,7 +235,7 @@ func (bg *Server) serveData() {
 			slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
 		)
 
-		if bg.authData.UserAccessToken == nil {
+		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
 			http.Redirect(w, r, "/auth", http.StatusFound)
 			return
 		}
