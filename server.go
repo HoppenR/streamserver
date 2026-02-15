@@ -18,25 +18,23 @@ import (
 )
 
 type Server struct {
-	authData       *ls.AuthData
-	follows        *ls.TwitchFollows
-	hasInitStreams bool
+	onLive         func(ls.StreamData)
+	streams        *ls.Streams
+	forceCheck     chan bool
 	lives          map[string]ls.StreamData
 	logger         *slog.Logger
-	mutex          sync.Mutex
-	onLive         func(ls.StreamData)
 	onOffline      func(ls.StreamData)
-	redirectUri    string
+	authData       *ls.AuthData
+	follows        *ls.TwitchFollows
+	redirectURI    string
 	srv            http.Server
-	streams        *ls.Streams
 	timer          time.Duration
-	userName       string
+	mutex          sync.Mutex
 	strimsEnabled  bool
-
-	forceCheck chan bool
+	hasInitStreams bool
 }
 
-var ErrFollowsUnavailable = errors.New("No user access token and no follows obtained")
+var ErrFollowsUnavailable = errors.New("no user access token and no follows obtained")
 
 func NewServer() *Server {
 	return &Server{
@@ -78,8 +76,8 @@ func (bg *Server) SetOfflineCallback(f func(ls.StreamData)) *Server {
 	return bg
 }
 
-func (bg *Server) SetRedirect(redirectUri string) *Server {
-	bg.redirectUri = redirectUri
+func (bg *Server) SetRedirect(redirectURI string) *Server {
+	bg.redirectURI = redirectURI
 	return bg
 }
 
@@ -145,7 +143,10 @@ func (bg *Server) check(refreshFollows bool) error {
 
 	if bg.authData.AppAccessToken == nil || bg.authData.AppAccessToken.IsExpired(bg.timer) {
 		bg.logger.Info("refreshing app access token")
-		bg.authData.FetchAppAccessToken()
+		err = bg.authData.FetchAppAccessToken()
+		if err != nil {
+			bg.logger.Warn("fetching app access token failed")
+		}
 	}
 	if bg.authData.UserAccessToken != nil && bg.authData.UserAccessToken.IsExpired(bg.timer) {
 		bg.logger.Info("refreshing user access token")
@@ -203,14 +204,14 @@ func (bg *Server) serveData() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
+		_, _ = w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
 	})
 
 	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) {
 		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
 			query := make(url.Values)
 			query.Add("client_id", bg.authData.ClientID)
-			query.Add("redirect_uri", bg.redirectUri)
+			query.Add("redirect_uri", bg.redirectURI)
 			query.Add("response_type", "code")
 			query.Add("scope", "user:read:follows")
 
@@ -219,12 +220,12 @@ func (bg *Server) serveData() {
 			return
 		}
 
-		w.Write([]byte("Welcome to streamserver."))
+		_, _ = w.Write([]byte("Welcome to streamserver."))
 	})
 
 	mux.HandleFunc("GET /stream-data", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Content-Type"), "application/octet-stream") {
-			w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
+			_, _ = w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
 			return
 		}
 
@@ -265,9 +266,9 @@ func (bg *Server) serveData() {
 			http.Error(w, "Access token not found", http.StatusBadRequest)
 			return
 		}
-		w.Write([]byte("Authentication successful! You can now close this page."))
+		_, _ = w.Write([]byte("Authentication successful! You can now close this page."))
 
-		err := bg.authData.ExchangeCodeForUserAccessToken(accessCode, bg.redirectUri)
+		err := bg.authData.ExchangeCodeForUserAccessToken(accessCode, bg.redirectURI)
 		if err != nil {
 			bg.logger.Warn("could not exchange code for token", "err", err)
 			return
@@ -276,7 +277,9 @@ func (bg *Server) serveData() {
 	})
 
 	bg.srv.Handler = mux
-	bg.srv.ListenAndServe()
+	if err := bg.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		bg.logger.Error("listen and serve failed", "err", err)
+	}
 }
 
 func (bg *Server) GetLiveStreams(refreshFollows bool) error {
@@ -284,7 +287,7 @@ func (bg *Server) GetLiveStreams(refreshFollows bool) error {
 	// Twitch
 	if bg.follows == nil || refreshFollows {
 		if bg.authData.UserAccessToken != nil && !bg.authData.UserAccessToken.IsExpired(bg.timer) {
-			newFollows := new(ls.TwitchFollows)
+			var newFollows *ls.TwitchFollows
 			newFollows, err = ls.GetTwitchFollows(bg.authData.UserAccessToken.AccessToken, bg.authData.ClientID, bg.authData.UserID)
 			if errors.Is(err, context.DeadlineExceeded) {
 				bg.logger.Warn("timed out getting twitch follows")

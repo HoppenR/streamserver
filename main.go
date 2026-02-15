@@ -37,7 +37,7 @@ func main() {
 		"Use cache, set to false to refresh cache (useful after making changes to config.json)",
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(
+		_, _ = fmt.Fprintf(
 			flag.CommandLine.Output(),
 			"Usage: %s [-a=ADDRESS] [-r=DURATION] [-u=false]\n",
 			os.Args[0],

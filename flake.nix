@@ -37,6 +37,19 @@
             streamserver = build-pkg pkgs;
             default = streamserver;
           };
+
+          devShells.default = pkgs.mkShellNoCC {
+            buildInputs = with pkgs; [
+              go
+              gofumpt
+              gopls
+            ];
+
+            shellHook = /* bash */ ''
+              export STREAMSERVER_HOME=$(git rev-parse --show-toplevel) || exit
+              export XDG_CONFIG_DIRS="$STREAMSERVER_HOME/.nvim_config:$XDG_CONFIG_DIRS"
+            '';
+          };
         }
       );
     in

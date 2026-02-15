@@ -90,6 +90,6 @@ func (c *Config) Save(filename string) error {
 	defer file.Close()
 	enc := json.NewEncoder(file)
 	enc.SetIndent("", "    ")
-	enc.Encode(c.data)
-	return nil
+	err = enc.Encode(c.data)
+	return err
 }
