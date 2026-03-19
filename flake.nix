@@ -85,6 +85,7 @@
                   CLIENT_ID="your-id"
                   CLIENT_SECRET="your-secret"
                   USER_NAME="twitch-admin"
+                  STREAMS_BASIC_AUTH_PASS="homelabpass1"
                 '''
               '';
             };

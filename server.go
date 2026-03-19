@@ -32,6 +32,10 @@ type Server struct {
 	mutex          sync.Mutex
 	strimsEnabled  bool
 	hasInitStreams bool
+
+	// TODO: update libstreams/streamshower to use these:
+	basicAuthUser string
+	basicAuthPass string
 }
 
 var ErrFollowsUnavailable = errors.New("no user access token and no follows obtained")
@@ -52,6 +56,12 @@ func (bg *Server) SetAddress(address string) *Server {
 
 func (bg *Server) SetAuthData(ad *ls.AuthData) *Server {
 	bg.authData = ad
+	return bg
+}
+
+func (bg *Server) SetBasicAuthCredentials(user, pass string) *Server {
+	bg.basicAuthUser = user
+	bg.basicAuthPass = pass
 	return bg
 }
 
@@ -200,6 +210,22 @@ func (bg *Server) doStreamStatusCallbacks() {
 	bg.lives = newLives
 }
 
+func (bg *Server) basicAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if bg.basicAuthPass == "" {
+			next(w, r)
+			return
+		}
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != bg.basicAuthUser || pass != bg.basicAuthPass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (bg *Server) serveData() {
 	mux := http.NewServeMux()
 
@@ -223,7 +249,7 @@ func (bg *Server) serveData() {
 		_, _ = w.Write([]byte("Welcome to streamserver."))
 	})
 
-	mux.HandleFunc("GET /stream-data", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /stream-data", bg.basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Content-Type"), "application/octet-stream") {
 			_, _ = w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
 			return
@@ -232,7 +258,6 @@ func (bg *Server) serveData() {
 		bg.logger.Info(
 			"serving data",
 			slog.String("ip", r.RemoteAddr),
-			slog.String("x-real-ip", r.Header.Get("X-Real-IP")),
 			slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
 		)
 
@@ -250,15 +275,15 @@ func (bg *Server) serveData() {
 			http.Error(w, "Could not encode streams", http.StatusInternalServerError)
 			return
 		}
-	})
+	}))
 
-	mux.HandleFunc("POST /stream-data", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /stream-data", bg.basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		if bg.authData.UserAccessToken == nil {
 			http.Redirect(w, r, "/auth", http.StatusFound)
 			return
 		}
 		bg.forceCheck <- true
-	})
+	}))
 
 	mux.HandleFunc("GET /oauth-callback", func(w http.ResponseWriter, r *http.Request) {
 		accessCode := r.URL.Query().Get("code")

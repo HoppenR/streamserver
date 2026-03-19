@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	ls "github.com/HoppenR/libstreams"
@@ -103,6 +104,13 @@ func main() {
 	srv.SetRedirect(*redirect)
 	srv.SetLogger(logger)
 	srv.EnableStrims(true)
+	basicAuthPass := strings.TrimSpace(os.Getenv("STREAMS_BASIC_AUTH_PASS"))
+	if basicAuthPass == "" {
+		logger.Warn("Auth credentials not found in environment; server will be unprotected!")
+	} else {
+		srv.SetBasicAuthCredentials(cfg.data.UserName, basicAuthPass)
+	}
+
 	err = srv.Run()
 	if err != nil {
 		logger.Error("server exited abnormally", "err", err)
