@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -32,20 +34,70 @@ type Server struct {
 	mutex          sync.Mutex
 	strimsEnabled  bool
 	hasInitStreams bool
-
-	// TODO: update libstreams/streamshower to use these:
-	basicAuthUser string
-	basicAuthPass string
+	htmlTemplate   *template.Template
+	basicAuthUser  string
+	basicAuthPass  string
 }
 
 var ErrFollowsUnavailable = errors.New("no user access token and no follows obtained")
 
+const dashboardTmpl = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streamserver Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+               max-width: 800px; margin: 2em auto; line-height: 1.6; background: #0d1117; color: #c9d1d9; padding: 0 1em; }
+        a { color: #58a6ff; text-decoration: none; font-weight: 500; }
+	.lists-container { display: flex; gap: 2em; flex-wrap: wrap; }
+        .list-column { flex: 1; min-width: 300px; }
+        .stream-item { padding: 0.75em 0; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+        .viewer-count { color: #3fb950; font-family: monospace; background: rgba(63, 185, 80, 0.1); padding: 2px 8px; border-radius: 6px; }
+        .meta { color: #8b949e; font-size: 0.85em; margin-bottom: 2em; }
+    </style>
+</head>
+<body>
+    <h1>Streamserver Status</h1>
+    <div class="meta">Last updated: {{.LastFetched.Format "2006-01-02 15:04:05 (MST)"}}</div>
+
+    <div class="lists-container">
+        <div class="list-column">
+            <h2>Twitch ({{.Twitch.Len}})</h2>
+            <ul class="stream-list">
+                {{range .Twitch.Data}}
+                <li class="stream-item">
+                    <a href="https://twitch.tv/{{.UserName}}" target="_blank" rel="noopener">{{.UserName}}</a>
+                    <span class="viewer-count">{{.ViewerCount}} viewers</span>
+                </li>
+                {{end}}
+	    </ul>
+        </div>
+
+        <div class="list-column">
+            <h2>Strims ({{.Strims.Len}})</h2>
+            <ul class="stream-list">
+                {{range .Strims.Data}}
+                <li class="stream-item">
+                    <a href="https://strims.gg{{.URL}}" target="_blank" rel="noopener">{{.Channel}}</a>
+                    <span class="viewer-count">{{.Viewers}} viewers</span>
+                </li>
+                {{end}}
+	    </ul>
+        </div>
+    </div>
+</body>
+</html>`
+
 func NewServer() *Server {
 	return &Server{
-		forceCheck: make(chan bool),
-		lives:      make(map[string]ls.StreamData),
-		logger:     slog.New(slog.NewJSONHandler(os.Stdout, nil)),
-		streams:    new(ls.Streams),
+		forceCheck:   make(chan bool),
+		lives:        make(map[string]ls.StreamData),
+		logger:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		streams:      new(ls.Streams),
+		htmlTemplate: template.Must(template.New("dashboard").Parse(dashboardTmpl)),
 	}
 }
 
@@ -250,8 +302,8 @@ func (bg *Server) serveData() {
 	})
 
 	mux.HandleFunc("GET /stream-data", bg.basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Content-Type"), "application/octet-stream") {
-			_, _ = w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
+		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
+			http.Redirect(w, r, "/auth", http.StatusFound)
 			return
 		}
 
@@ -261,16 +313,23 @@ func (bg *Server) serveData() {
 			slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
 		)
 
-		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
-			http.Redirect(w, r, "/auth", http.StatusFound)
-			return
-		}
-
 		bg.mutex.Lock()
 		defer bg.mutex.Unlock()
 
-		enc := gob.NewEncoder(w)
-		err := enc.Encode(&bg.streams)
+		accept := r.Header.Get("Accept")
+		var err error
+		if strings.Contains(accept, "application/octet-stream") {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			enc := gob.NewEncoder(w)
+			err = enc.Encode(bg.streams)
+		} else if strings.Contains(accept, "application/json") {
+			w.Header().Set("Content-Type", "application/json")
+			enc := json.NewEncoder(w)
+			err = enc.Encode(bg.streams)
+		} else {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			err = bg.htmlTemplate.Execute(w, bg.streams)
+		}
 		if err != nil {
 			http.Error(w, "Could not encode streams", http.StatusInternalServerError)
 			return
@@ -278,11 +337,13 @@ func (bg *Server) serveData() {
 	}))
 
 	mux.HandleFunc("POST /stream-data", bg.basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		if bg.authData.UserAccessToken == nil {
-			http.Redirect(w, r, "/auth", http.StatusFound)
+		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
+			http.Error(w, "Unauthorized: Twitch login required", http.StatusUnauthorized)
 			return
 		}
 		bg.forceCheck <- true
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("Update triggered"))
 	}))
 
 	mux.HandleFunc("GET /oauth-callback", func(w http.ResponseWriter, r *http.Request) {
