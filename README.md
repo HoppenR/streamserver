@@ -45,3 +45,11 @@ Explanation of environment variables:
 `Client Secret`: The secret of your Twitch project
 
 `User ID`: Your Twitch username
+
+## Basic Auth
+
+If the endpoint is deployed publically you can define STREAMS_BASIC_AUTH_PASS
+environment variable to require the authenticating client to provide basic
+authentication in the form user:pass@domain.com where the user is the same as
+the twitch user name. This can be done with streamshower by providing it with
+STREAMS_BASIC_AUTH_PASS and STREAMS_BASIC_AUTH_USER.
