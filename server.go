@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -37,6 +38,13 @@ type Server struct {
 	htmlTemplate   *template.Template
 	basicAuthUser  string
 	basicAuthPass  string
+	lastFetched    time.Time
+}
+
+type dashboardView struct {
+	*ls.Streams
+	LastFetched            time.Time
+	RefreshIntervalSeconds int
 }
 
 var ErrFollowsUnavailable = errors.New("no user access token and no follows obtained")
@@ -61,7 +69,34 @@ const dashboardTmpl = `
 </head>
 <body>
     <h1>Streamserver Status</h1>
-    <div class="meta">Last updated: {{.LastFetched.Format "2006-01-02 15:04:05 (MST)"}}</div>
+    <div class="meta">
+        Last updated: {{.LastFetched.Format "2006-01-02 15:04:05 (MST)"}}
+        &mdash; <span id="timer">Next update in ...s</span>
+    </div>
+
+    <script>
+        const config = {
+            lastModified: {{.LastFetched.Unix}},
+            refreshInterval: {{.RefreshIntervalSeconds}}
+        }
+        function startFetchTimer() {
+            const display = document.getElementById('timer');
+            const update = () => {
+                const now = Math.floor(Date.now() / 1000);
+                const nextFetchAt = config.lastModified + config.refreshInterval;
+                let remaining = nextFetchAt - now;
+                if (remaining <= 0) {
+                    display.innerText = "Syncing with server...";
+		    location.reload();
+                } else {
+                    display.innerText = "Next update in " + remaining + "s";
+                }
+            };
+            update();
+            setInterval(update, 1000);
+        }
+        window.onload = startFetchTimer;
+    </script>
 
     <div class="lists-container">
         <div class="list-column">
@@ -119,7 +154,6 @@ func (bg *Server) SetBasicAuthCredentials(user, pass string) *Server {
 
 func (bg *Server) SetInterval(timer time.Duration) *Server {
 	bg.timer = timer
-	bg.streams.RefreshInterval = timer
 	return bg
 }
 
@@ -316,6 +350,17 @@ func (bg *Server) serveData() {
 		bg.mutex.Lock()
 		defer bg.mutex.Unlock()
 
+		w.Header().Set("Last-Modified", bg.lastFetched.UTC().Format(http.TimeFormat))
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(bg.timer.Seconds())))
+
+		if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+			t, err := http.ParseTime(ims)
+			if err == nil && !bg.lastFetched.After(t) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+
 		accept := r.Header.Get("Accept")
 		var err error
 		if strings.Contains(accept, "application/octet-stream") {
@@ -328,7 +373,12 @@ func (bg *Server) serveData() {
 			err = enc.Encode(bg.streams)
 		} else {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			err = bg.htmlTemplate.Execute(w, bg.streams)
+			dbw := &dashboardView{
+				Streams:                bg.streams,
+				LastFetched:            bg.lastFetched,
+				RefreshIntervalSeconds: int(bg.timer.Seconds()),
+			}
+			err = bg.htmlTemplate.Execute(w, dbw)
 		}
 		if err != nil {
 			http.Error(w, "Could not encode streams", http.StatusInternalServerError)
@@ -418,6 +468,6 @@ func (bg *Server) GetLiveStreams(refreshFollows bool) error {
 		}
 	}
 
-	bg.streams.LastFetched = time.Now()
+	bg.lastFetched = time.Now().Truncate(time.Second)
 	return nil
 }
