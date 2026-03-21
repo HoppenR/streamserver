@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,82 +51,8 @@ type dashboardView struct {
 
 var ErrFollowsUnavailable = errors.New("no user access token and no follows obtained")
 
-const dashboardTmpl = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Streamserver Dashboard</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-               max-width: 800px; margin: 2em auto; line-height: 1.6; background: #0d1117; color: #c9d1d9; padding: 0 1em; }
-        a { color: #58a6ff; text-decoration: none; font-weight: 500; }
-	.lists-container { display: flex; gap: 2em; flex-wrap: wrap; }
-        .list-column { flex: 1; min-width: 300px; }
-        .stream-item { padding: 0.75em 0; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
-        .viewer-count { color: #3fb950; font-family: monospace; background: rgba(63, 185, 80, 0.1); padding: 2px 8px; border-radius: 6px; }
-        .meta { color: #8b949e; font-size: 0.85em; margin-bottom: 2em; }
-    </style>
-</head>
-<body>
-    <h1>Streamserver Status</h1>
-    <div class="meta">
-        Last updated: {{.LastFetched.Format "2006-01-02 15:04:05 (MST)"}}
-        &mdash; <span id="timer">Next update in ...s</span>
-    </div>
-
-    <script>
-        const config = {
-            lastModified: {{.LastFetched.Unix}},
-            refreshInterval: {{.RefreshIntervalSeconds}}
-        }
-        function startFetchTimer() {
-            const display = document.getElementById('timer');
-            const update = () => {
-                const now = Math.floor(Date.now() / 1000);
-                const nextFetchAt = config.lastModified + config.refreshInterval;
-                let remaining = nextFetchAt - now;
-                if (remaining <= 0) {
-                    display.innerText = "Syncing with server...";
-		    location.reload();
-                } else {
-                    display.innerText = "Next update in " + remaining + "s";
-                }
-            };
-            update();
-            setInterval(update, 1000);
-        }
-        window.onload = startFetchTimer;
-    </script>
-
-    <div class="lists-container">
-        <div class="list-column">
-            <h2>Twitch ({{.Twitch.Len}})</h2>
-            <ul class="stream-list">
-                {{range .Twitch.Data}}
-                <li class="stream-item">
-                    <a href="https://twitch.tv/{{.UserName}}" target="_blank" rel="noopener">{{.UserName}}</a>
-                    <span class="viewer-count">{{.ViewerCount}} viewers</span>
-                </li>
-                {{end}}
-	    </ul>
-        </div>
-
-        <div class="list-column">
-            <h2>Strims ({{.Strims.Len}})</h2>
-            <ul class="stream-list">
-                {{range .Strims.Data}}
-                <li class="stream-item">
-                    <a href="https://strims.gg{{.URL}}" target="_blank" rel="noopener">{{.Channel}}</a>
-                    <span class="viewer-count">{{.Viewers}} viewers</span>
-                </li>
-                {{end}}
-	    </ul>
-        </div>
-    </div>
-</body>
-</html>`
+//go:embed dashboard.gohtml
+var dashboardTmpl string
 
 func NewServer() *Server {
 	return &Server{
@@ -452,6 +380,7 @@ func (bg *Server) GetLiveStreams(refreshFollows bool) error {
 	} else if err != nil {
 		return err
 	} else {
+		sort.Sort(sort.Reverse(newTwitchStreams))
 		bg.streams.Twitch = newTwitchStreams
 	}
 
@@ -464,6 +393,7 @@ func (bg *Server) GetLiveStreams(refreshFollows bool) error {
 		} else if err != nil {
 			return err
 		} else {
+			sort.Sort(sort.Reverse(newStrimsStreams))
 			bg.streams.Strims = newStrimsStreams
 		}
 	}
