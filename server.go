@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	_ "embed"
 	"encoding/gob"
 	"encoding/json"
@@ -23,24 +24,25 @@ import (
 )
 
 type Server struct {
-	onLive         func(ls.StreamData)
-	streams        *ls.Streams
-	forceCheck     chan bool
-	lives          map[string]ls.StreamData
-	logger         *slog.Logger
-	onOffline      func(ls.StreamData)
-	authData       *ls.AuthData
-	follows        *ls.TwitchFollows
-	redirectURI    string
-	srv            http.Server
-	timer          time.Duration
-	mutex          sync.Mutex
-	strimsEnabled  bool
-	hasInitStreams bool
-	htmlTemplate   *template.Template
-	basicAuthUser  string
-	basicAuthPass  string
-	lastFetched    time.Time
+	onLive          func(ls.StreamData)
+	streams         *ls.Streams
+	forceCheck      chan bool
+	lives           map[string]ls.StreamData
+	logger          *slog.Logger
+	onOffline       func(ls.StreamData)
+	authData        *ls.AuthData
+	follows         *ls.TwitchFollows
+	redirectURI     string
+	srv             http.Server
+	timer           time.Duration
+	mutex           sync.Mutex
+	strimsEnabled   bool
+	hasInitStreams  bool
+	htmlTemplate    *template.Template
+	basicAuthUser   string
+	basicAuthPass   string
+	lastFetched     time.Time
+	stateSignSecret []byte
 }
 
 type dashboardView struct {
@@ -55,12 +57,19 @@ var ErrFollowsUnavailable = errors.New("no user access token and no follows obta
 var dashboardTmpl string
 
 func NewServer() *Server {
+	secret := make([]byte, 32)
+	n, err := rand.Read(secret)
+	if err != nil || n != 32 {
+		panic("failed to seed signing secret: " + err.Error())
+	}
+
 	return &Server{
-		forceCheck:   make(chan bool),
-		lives:        make(map[string]ls.StreamData),
-		logger:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
-		streams:      new(ls.Streams),
-		htmlTemplate: template.Must(template.New("dashboard").Parse(dashboardTmpl)),
+		forceCheck:      make(chan bool),
+		lives:           make(map[string]ls.StreamData),
+		logger:          slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		streams:         new(ls.Streams),
+		htmlTemplate:    template.Must(template.New("dashboard").Parse(dashboardTmpl)),
+		stateSignSecret: secret,
 	}
 }
 
@@ -249,11 +258,13 @@ func (bg *Server) serveData() {
 
 	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) {
 		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
+			stateContent := createSignedState(bg.stateSignSecret)
 			query := make(url.Values)
 			query.Add("client_id", bg.authData.ClientID)
 			query.Add("redirect_uri", bg.redirectURI)
 			query.Add("response_type", "code")
 			query.Add("scope", "user:read:follows")
+			query.Add("state", stateContent)
 
 			authURL := "https://id.twitch.tv/oauth2/authorize?" + query.Encode()
 			http.Redirect(w, r, authURL, http.StatusFound)
@@ -326,6 +337,16 @@ func (bg *Server) serveData() {
 
 	mux.HandleFunc("GET /oauth-callback", func(w http.ResponseWriter, r *http.Request) {
 		accessCode := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+		if !verifySignedState(state, bg.stateSignSecret) {
+			bg.logger.Warn(
+				"unauthorized or expired oauth callback",
+				slog.String("ip", r.RemoteAddr),
+				slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
+			)
+			http.Error(w, "Forbidden: Invalid or expired state", http.StatusForbidden)
+			return
+		}
 		if accessCode == "" {
 			http.Error(w, "Access token not found", http.StatusBadRequest)
 			return
