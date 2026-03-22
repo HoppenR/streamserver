@@ -10,15 +10,19 @@ import (
 	"time"
 )
 
-func createSignedState(secret []byte) string {
+func createSignedState(secret []byte) (string, error) {
 	now := time.Now().Unix()
 	payload := fmt.Sprintf("%d", now)
 
-	h := hmac.New(sha256.New, secret)
-	h.Write([]byte(payload))
-	signature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+	hash := hmac.New(sha256.New, secret)
+	payloadBytes := []byte(payload)
+	n, err := hash.Write(payloadBytes)
+	if err != nil || n != len(payloadBytes) {
+		return "", fmt.Errorf("failed to write to hmac: %v", err)
+	}
+	signature := base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
 
-	return fmt.Sprintf("%s:%s", payload, signature)
+	return fmt.Sprintf("%s:%s", payload, signature), nil
 }
 
 func verifySignedState(state string, secret []byte) bool {
@@ -29,9 +33,13 @@ func verifySignedState(state string, secret []byte) bool {
 
 	payload, providedSig := parts[0], parts[1]
 
-	h := hmac.New(sha256.New, secret)
-	h.Write([]byte(payload))
-	expectedSig := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+	hash := hmac.New(sha256.New, secret)
+	payloadBytes := []byte(payload)
+	n, err := hash.Write(payloadBytes)
+	if err != nil || n != len(payloadBytes) {
+		return false
+	}
+	expectedSig := base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
 
 	if !hmac.Equal([]byte(providedSig), []byte(expectedSig)) {
 		return false
@@ -42,7 +50,7 @@ func verifySignedState(state string, secret []byte) bool {
 		return false
 	}
 
-	if time.Now().Unix()-ts > 600 {
+	if time.Now().Unix()-ts > 60 {
 		return false
 	}
 

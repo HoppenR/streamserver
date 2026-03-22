@@ -39,7 +39,6 @@ type Server struct {
 	strimsEnabled   bool
 	hasInitStreams  bool
 	htmlTemplate    *template.Template
-	basicAuthUser   string
 	basicAuthPass   string
 	lastFetched     time.Time
 	stateSignSecret []byte
@@ -64,12 +63,18 @@ func NewServer() *Server {
 	}
 
 	return &Server{
-		forceCheck:      make(chan bool),
-		lives:           make(map[string]ls.StreamData),
-		logger:          slog.New(slog.NewJSONHandler(os.Stdout, nil)),
-		streams:         new(ls.Streams),
-		htmlTemplate:    template.Must(template.New("dashboard").Parse(dashboardTmpl)),
+		forceCheck:   make(chan bool),
+		htmlTemplate: template.Must(template.New("dashboard").Parse(dashboardTmpl)),
+		lives:        make(map[string]ls.StreamData),
+		logger:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		srv: http.Server{
+			ReadTimeout:       5 * time.Second,
+			ReadHeaderTimeout: 2 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		},
 		stateSignSecret: secret,
+		streams:         new(ls.Streams),
 	}
 }
 
@@ -83,8 +88,7 @@ func (bg *Server) SetAuthData(ad *ls.AuthData) *Server {
 	return bg
 }
 
-func (bg *Server) SetBasicAuthCredentials(user, pass string) *Server {
-	bg.basicAuthUser = user
+func (bg *Server) SetBasicAuthPassword(pass string) *Server {
 	bg.basicAuthPass = pass
 	return bg
 }
@@ -145,18 +149,21 @@ func (bg *Server) Run() error {
 	// Main Event Loop
 	tick := time.NewTicker(bg.timer)
 	eventLoopRunning := true
+	var refreshFollows bool
 	for eventLoopRunning {
+		refreshFollows = false
 		select {
 		case interrupt := <-interruptCh:
 			bg.logger.Warn("caught interrupt", "signal", interrupt)
 			eventLoopRunning = false
 			continue
-		case <-bg.forceCheck:
-			bg.logger.Info("recv force check")
+		case b := <-bg.forceCheck:
+			refreshFollows = b
+			bg.logger.Info("force check", "refreshFollows", refreshFollows)
 			tick.Reset(bg.timer)
 		case <-tick.C:
 		}
-		err = bg.check(false)
+		err = bg.check(refreshFollows)
 		if err != nil {
 			return err
 		}
@@ -240,7 +247,7 @@ func (bg *Server) basicAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		user, pass, ok := r.BasicAuth()
-		if !ok || user != bg.basicAuthUser || pass != bg.basicAuthPass {
+		if !ok || user != bg.authData.UserName || pass != bg.basicAuthPass {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -258,20 +265,41 @@ func (bg *Server) serveData() {
 
 	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) {
 		if bg.authData.UserAccessToken == nil || bg.authData.UserAccessToken.IsExpired(bg.timer) {
-			stateContent := createSignedState(bg.stateSignSecret)
+			stateContent, err := createSignedState(bg.stateSignSecret)
+			if err != nil {
+				bg.logger.Error("failed to generate state", "err", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			bg.logger.Info(
+				"authenticating user",
+				slog.String("ip", r.RemoteAddr),
+				slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
+			)
+
 			query := make(url.Values)
 			query.Add("client_id", bg.authData.ClientID)
 			query.Add("redirect_uri", bg.redirectURI)
 			query.Add("response_type", "code")
 			query.Add("scope", "user:read:follows")
 			query.Add("state", stateContent)
+			http.SetCookie(w, &http.Cookie{
+				Name:     "oauth_state",
+				Value:    stateContent,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   true,
+				SameSite: http.SameSiteLaxMode,
+				MaxAge:   60,
+			})
 
 			authURL := "https://id.twitch.tv/oauth2/authorize?" + query.Encode()
 			http.Redirect(w, r, authURL, http.StatusFound)
 			return
 		}
 
-		_, _ = w.Write([]byte("Welcome to streamserver."))
+		http.Error(w, "Already authenticated", http.StatusForbidden)
 	})
 
 	mux.HandleFunc("GET /stream-data", bg.basicAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -336,9 +364,17 @@ func (bg *Server) serveData() {
 	}))
 
 	mux.HandleFunc("GET /oauth-callback", func(w http.ResponseWriter, r *http.Request) {
-		accessCode := r.URL.Query().Get("code")
-		state := r.URL.Query().Get("state")
-		if !verifySignedState(state, bg.stateSignSecret) {
+		stateCookie, err := r.Cookie("oauth_state")
+		if err != nil {
+			http.Error(w, "Forbidden: Invalid or expired state", http.StatusForbidden)
+			return
+		}
+		stateQuery := r.URL.Query().Get("state")
+		if stateQuery != stateCookie.Value {
+			http.Error(w, "Forbidden: Invalid or expired state", http.StatusForbidden)
+			return
+		}
+		if !verifySignedState(stateQuery, bg.stateSignSecret) {
 			bg.logger.Warn(
 				"unauthorized or expired oauth callback",
 				slog.String("ip", r.RemoteAddr),
@@ -347,18 +383,40 @@ func (bg *Server) serveData() {
 			http.Error(w, "Forbidden: Invalid or expired state", http.StatusForbidden)
 			return
 		}
+		http.SetCookie(w, &http.Cookie{
+			Name:   "oauth_state",
+			Value:  "",
+			Path:   "/",
+			MaxAge: -1,
+		})
+
+		accessCode := r.URL.Query().Get("code")
 		if accessCode == "" {
 			http.Error(w, "Access token not found", http.StatusBadRequest)
 			return
 		}
-		_, _ = w.Write([]byte("Authentication successful! You can now close this page."))
-
-		err := bg.authData.ExchangeCodeForUserAccessToken(accessCode, bg.redirectURI)
+		token, err := bg.authData.ExchangeCodeForUserAccessToken(accessCode, bg.redirectURI)
 		if err != nil {
 			bg.logger.Warn("could not exchange code for token", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-		bg.forceCheck <- true
+		val, err := bg.authData.ValidateUserAccessToken(token)
+		if err != nil {
+			bg.logger.Warn("could not validate token", "err", err)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if val.Login != bg.authData.UserName {
+			bg.logger.Warn("identity mismatch", "got", val.Login, "want", bg.authData.UserName)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		bg.authData.UserAccessToken = token
+
+		_, _ = w.Write([]byte("Authentication successful! You can now close this page."))
+		bg.forceCheck <- false
 	})
 
 	bg.srv.Handler = mux

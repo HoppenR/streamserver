@@ -79,7 +79,7 @@ func main() {
 		logger.Info("read config data")
 	}
 
-	ad := new(ls.AuthData)
+	ad := ls.NewAuthData()
 	ad.SetClientID(cfg.data.ClientID)
 	ad.SetClientSecret(cfg.data.ClientSecret)
 	ad.SetUserName(cfg.data.UserName)
@@ -108,7 +108,7 @@ func main() {
 	if basicAuthPass == "" {
 		logger.Warn("Auth credentials not found in environment; server will be unprotected!")
 	} else {
-		srv.SetBasicAuthCredentials(cfg.data.UserName, basicAuthPass)
+		srv.SetBasicAuthPassword(basicAuthPass)
 	}
 
 	err = srv.Run()
