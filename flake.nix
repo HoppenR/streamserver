@@ -19,7 +19,7 @@
           pname = "streamserver";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-fZSU0CXrvfevhF1nrSJClKT73O8uzkAbMiSKq0n4Pk8=";
+          vendorHash = "sha256-ggnMwIXVBBP97Tz2/XibMhk3AlL5/7f/9PrdIGhuav8=";
           meta = {
             description = "Go-based stream server";
             homepage = "https://github.com/HoppenR/streamserver";

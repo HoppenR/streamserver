@@ -91,7 +91,7 @@ func main() {
 	if *useCache {
 		err = ad.GetCachedData()
 		if err != nil {
-			logger.Warn("cache read failed", "err", configErr)
+			logger.Warn("cache read failed", "err", err)
 		} else {
 			logger.Info("read cached data")
 		}

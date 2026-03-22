@@ -42,6 +42,7 @@ type Server struct {
 	basicAuthPass   string
 	lastFetched     time.Time
 	stateSignSecret []byte
+	funcMap         template.FuncMap
 }
 
 type dashboardView struct {
@@ -62,9 +63,19 @@ func NewServer() *Server {
 		panic("failed to seed signing secret: " + err.Error())
 	}
 
+	replacer := strings.NewReplacer(
+		"{width}", "320",
+		"{height}", "180",
+	)
+	funcMap := template.FuncMap{
+		"executeThumbnailSizeTemplate": func(url string) string {
+			return replacer.Replace(url)
+		},
+	}
+	htmlTemplate := template.Must(template.New("dashboard").Funcs(funcMap).Parse(dashboardTmpl))
 	return &Server{
 		forceCheck:   make(chan bool),
-		htmlTemplate: template.Must(template.New("dashboard").Parse(dashboardTmpl)),
+		htmlTemplate: htmlTemplate,
 		lives:        make(map[string]ls.StreamData),
 		logger:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 		srv: http.Server{
@@ -133,7 +144,7 @@ func (bg *Server) Run() error {
 	if err != nil {
 		return err
 	}
-	err = bg.check(false)
+	err = bg.check(true)
 	if err != nil {
 		return err
 	}

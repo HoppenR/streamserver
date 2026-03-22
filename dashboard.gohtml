@@ -10,11 +10,14 @@
         a { color: #58a6ff; text-decoration: none; font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; }
         .lists-container { display: flex; gap: 2em; flex-wrap: wrap; }
         .list-column { flex: 1; min-width: 300px; }
-        .stream-item { padding: 0.75em 0; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+        .stream-item { padding: 0.75em 0; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; position: relative; }
         .viewer-count { color: #3fb950; font-family: monospace; background: rgba(63, 185, 80, 0.1); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
         .rustler-count { color: #ffa1a1; font-family: monospace; background: rgba(255, 107, 107, 0.15); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
         .meta { color: #8b949e; font-size: 0.85em; margin-bottom: 2em; }
         .count-group { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+        .thumb-preview { display: none; position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 10; border: 2px solid #30363d; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); background: #0d1117; pointer-events: none; }
+        .stream-item:hover .thumb-preview { display: block }
+        .thumb-preview img { display: block; width: 320px; height: auto; border-radius: 6px; }
     </style>
 </head>
 <body>
@@ -55,6 +58,9 @@
                 <li class="stream-item">
                     <a href="https://twitch.tv/{{.UserName}}" target="_blank" rel="noopener">{{.UserName}}</a>
                     <span class="viewer-count">{{.ViewerCount}} viewers</span>
+                    <div class="thumb-preview">
+                        <img src="{{.ThumbnailURL | executeThumbnailSizeTemplate }}" alt="Preview">
+                    </div>
                 </li>
                 {{end}}
 	    </ul>
@@ -69,6 +75,9 @@
                     <div class="count-group">
                         <span class="viewer-count">{{.Viewers}} viewers</span>
                         <span class="rustler-count">{{.Rustlers}} rustlers</span>
+                        <div class="thumb-preview">
+                            <img src="{{.Thumbnail}}" alt="Preview">
+                        </div>
                     </div>
                 </li>
                 {{end}}
