@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	_ "embed"
+	"embed"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -38,7 +38,7 @@ type Server struct {
 	mutex           sync.Mutex
 	strimsEnabled   bool
 	hasInitStreams  bool
-	htmlTemplate    *template.Template
+	tmpl            *template.Template
 	basicAuthPass   string
 	lastFetched     time.Time
 	stateSignSecret []byte
@@ -53,8 +53,8 @@ type dashboardView struct {
 
 var ErrFollowsUnavailable = errors.New("no user access token and no follows obtained")
 
-//go:embed dashboard.gohtml
-var dashboardTmpl string
+//go:embed templates/*.gohtml
+var templateFiles embed.FS
 
 func NewServer() *Server {
 	secret := make([]byte, 32)
@@ -72,12 +72,16 @@ func NewServer() *Server {
 			return replacer.Replace(url)
 		},
 	}
-	htmlTemplate := template.Must(template.New("dashboard").Funcs(funcMap).Parse(dashboardTmpl))
+	var tmpl *template.Template
+	tmpl, err = template.New("streamserver").Funcs(funcMap).ParseFS(templateFiles, "templates/*.gohtml")
+	if err != nil {
+		panic("failed to parse templates: " + err.Error())
+	}
 	return &Server{
-		forceCheck:   make(chan bool),
-		htmlTemplate: htmlTemplate,
-		lives:        make(map[string]ls.StreamData),
-		logger:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		forceCheck: make(chan bool),
+		tmpl:       tmpl,
+		lives:      make(map[string]ls.StreamData),
+		logger:     slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 		srv: http.Server{
 			ReadTimeout:       5 * time.Second,
 			ReadHeaderTimeout: 2 * time.Second,
@@ -269,9 +273,19 @@ func (bg *Server) basicAuth(next http.HandlerFunc) http.HandlerFunc {
 
 func (bg *Server) serveData() {
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("This endpoint is meant to be used through the streamchecker project"))
+		data := struct {
+			AppValid  bool
+			UserValid bool
+		}{
+			AppValid:  bg.authData.AppAccessToken != nil && !bg.authData.AppAccessToken.IsExpired(bg.timer),
+			UserValid: bg.authData.UserAccessToken != nil && !bg.authData.UserAccessToken.IsExpired(bg.timer),
+		}
+		err := bg.tmpl.ExecuteTemplate(w, "index.gohtml", data)
+		if err != nil {
+			bg.logger.Error("failed to execute index template", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 	})
 
 	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) {
@@ -356,7 +370,7 @@ func (bg *Server) serveData() {
 				LastFetched:            bg.lastFetched,
 				RefreshIntervalSeconds: int(bg.timer.Seconds()),
 			}
-			err = bg.htmlTemplate.Execute(w, dbw)
+			err = bg.tmpl.ExecuteTemplate(w, "dashboard.gohtml", dbw)
 		}
 		if err != nil {
 			http.Error(w, "Could not encode streams", http.StatusInternalServerError)
@@ -426,8 +440,8 @@ func (bg *Server) serveData() {
 
 		bg.authData.UserAccessToken = token
 
-		_, _ = w.Write([]byte("Authentication successful! You can now close this page."))
 		bg.forceCheck <- false
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
 
 	bg.srv.Handler = mux

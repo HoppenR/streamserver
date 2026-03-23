@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streamserver | Home</title>
+    <style>
+        .container { text-align: center; max-width: 600px; padding: 2em; }
+        .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        .dot-green { background: #3fb950; box-shadow: 0 0 8px rgba(63, 185, 80, 0.4); }
+        .dot-red { background: #f85149; box-shadow: 0 0 8px rgba(248, 81, 73, 0.4); }
+        .nav-card span { font-size: 0.8em; color: #8b949e; font-weight: 400; }
+        .nav-card { background: #161b22; border: 1px solid #30363d; padding: 1.5em; border-radius: 8px; text-decoration: none; color: #58a6ff; font-weight: 600; transition: all 0.2s ease; display: flex; flex-direction: column; gap: 8px; }
+        .nav-card:hover { border-color: #58a6ff; background: #21262d; transform: translateY(-2px); }
+        .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .status-row { display: flex; justify-content: center; gap: 20px; margin-bottom: 2em; font-size: 0.85em; color: #8b949e; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        h1 { color: #f0f6fc; margin-bottom: 0.5em; font-weight: 600; }
+        p { color: #8b949e; margin-bottom: 2em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Streamserver</h1>
+        <div class="status-row">
+            <span>
+                <span class="dot {{if .AppValid}}dot-green{{else}}dot-red{{end}}"></span>
+                app access
+            </span>
+            <span>
+                <span class="dot {{if .UserValid}}dot-green{{else}}dot-red{{end}}"></span>
+                user access
+            </span>
+        </div>
+        <div class="nav-grid">
+            <a href="/stream-data" class="nav-card">
+                Dashboard
+                <span>View live streams</span>
+            </a>
+            <a href="/auth" class="nav-card">
+                Authenticate
+                <span>Authenticate server to your Twitch follows</span>
+            </a>
+        </div>
+    </div>
+</body>
+</html>
