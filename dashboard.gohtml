@@ -5,25 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Streamserver Dashboard</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-               max-width: 800px; margin: 1em auto; line-height: 1.6; background: #0d1117; color: #c9d1d9; padding: 0 1em; }
-        a { color: #58a6ff; text-decoration: none; font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; }
-        .lists-container { display: flex; gap: 2em; flex-wrap: wrap; }
-        .list-column { flex: 1; min-width: 300px; }
-        .stream-item { padding: 0.75em 0; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; position: relative; }
-        .viewer-count { color: #3fb950; font-family: monospace; background: rgba(63, 185, 80, 0.1); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
-        .rustler-count { color: #ffa1a1; font-family: monospace; background: rgba(255, 107, 107, 0.15); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
-        .meta { color: #8b949e; font-size: 0.85em; margin-bottom: 2em; }
         .count-group { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
-        .thumb-preview { display: none; position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 10; border: 2px solid #30363d; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); background: #0d1117; pointer-events: none; }
+        .list-column { flex: 1; min-width: 300px; }
+        .lists-container { display: flex; gap: 2em; flex-wrap: wrap; }
+        .meta { color: #8b949e; font-size: 0.85em; margin-bottom: 2em; display: flex; justify-content: space-between; align-items: center; }
+        .refresh-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+        .rustler-count { color: #ffa1a1; font-family: monospace; background: rgba(255, 107, 107, 0.15); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+        .stream-item { padding: 0.75em 0; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; position: relative; }
         .stream-item:hover .thumb-preview { display: block }
         .thumb-preview img { display: block; width: 320px; height: auto; border-radius: 6px; }
+        .thumb-preview { display: none; position: absolute; left: 100%; top: 50%; transform: translateY(-50%); z-index: 10; border: 2px solid #30363d; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); background: #0d1117; pointer-events: none; }
+        .thumb-title { padding: 8px; font-size: 12px; font-weight: 600; color: #f0f6fc; background: #161b22; border-bottom: 1px solid #30363d; display: block; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .viewer-count { color: #3fb950; font-family: monospace; background: rgba(63, 185, 80, 0.1); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+        a { color: #58a6ff; text-decoration: none; font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 800px; margin: 1em auto; line-height: 1.6; background: #0d1117; color: #c9d1d9; padding: 0 1em; }
     </style>
 </head>
 <body>
     <div class="meta">
-        Last updated: {{.LastFetched.Format "2006-01-02 15:04:05 (MST)"}}
-        &mdash; <span id="timer">Next update in ...s</span>
+        <div>
+            Last updated: {{.LastFetched.Format "2006-01-02 15:04:05 (MST)"}}
+            &mdash; <span id="timer">Next update in ...s</span>
+        </div>
+        <button id="hard-refresh" class="refresh-btn" onclick="triggerHardRefresh()">
+            Update streams
+        </button>
     </div>
 
     <script>
@@ -31,21 +37,40 @@
             lastModified: {{.LastFetched.Unix}},
             refreshInterval: {{.RefreshIntervalSeconds}}
         }
+        let timerId;
+
+        async function triggerHardRefresh() {
+            const btn = document.getElementById('hard-refresh');
+            const timer = document.getElementById('timer');
+            clearInterval(timerId);
+            btn.disabled = true;
+            timer.innerText = "Triggering backend update...";
+            try {
+                const response = await fetch('/stream-data', { method: 'POST' });
+                if (response.status !== 202) throw new Error();
+                timer.innerText = "Reloading...";
+                setTimeout(() => location.reload(), 500);
+            } catch (e) {
+                startFetchTimer()
+                btn.disabled = false;
+            }
+        }
+
         function startFetchTimer() {
             const display = document.getElementById('timer');
             const update = () => {
                 const now = Math.floor(Date.now() / 1000);
                 const nextFetchAt = config.lastModified + config.refreshInterval;
-                let remaining = nextFetchAt - now;
+                const remaining = nextFetchAt - now;
                 if (remaining <= 0) {
-                    display.innerText = "Syncing with server...";
-		    location.reload();
+                    display.innerText = "Loading...";
+                    location.reload();
                 } else {
                     display.innerText = `Next update in ${remaining}s`;
                 }
             };
             update();
-            setInterval(update, 1000);
+            timerId = setInterval(update, 1000);
         }
         window.onload = startFetchTimer;
     </script>
@@ -59,6 +84,7 @@
                     <a href="https://twitch.tv/{{.UserName}}" target="_blank" rel="noopener">{{.UserName}}</a>
                     <span class="viewer-count">{{.ViewerCount}} viewers</span>
                     <div class="thumb-preview">
+                        <div class="thumb-title">{{.Title}}</div>
                         <img src="{{.ThumbnailURL | executeThumbnailSizeTemplate }}" alt="Preview">
                     </div>
                 </li>
@@ -75,9 +101,10 @@
                     <div class="count-group">
                         <span class="viewer-count">{{.Viewers}} viewers</span>
                         <span class="rustler-count">{{.Rustlers}} rustlers</span>
-                        <div class="thumb-preview">
-                            <img src="{{.Thumbnail}}" alt="Preview">
-                        </div>
+                    </div>
+                    <div class="thumb-preview">
+                        <div class="thumb-title">{{.Title}}</div>
+                        <img src="{{.Thumbnail}}" alt="Preview">
                     </div>
                 </li>
                 {{end}}
