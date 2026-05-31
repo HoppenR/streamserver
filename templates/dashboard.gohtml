@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
     <title>Streamserver Dashboard</title>
     <style>
         .count-group { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
@@ -81,7 +82,7 @@
             <ul class="stream-list">
                 {{range .Twitch.Data}}
                 <li class="stream-item">
-                    <a href="https://twitch.tv/{{.UserName}}" target="_blank" rel="noopener">{{.UserName}}</a>
+                    <a href="https://twitch.tv/{{.UserName}}" target="_blank" rel="noopener noreferrer">{{.UserName}}</a>
                     <span class="viewer-count">{{.ViewerCount}} viewers</span>
                     <div class="thumb-preview">
                         <div class="thumb-title">{{.Title}}</div>
@@ -97,7 +98,7 @@
             <ul class="stream-list">
                 {{range .Strims.Data}}
                 <li class="stream-item">
-                    <a href="https://strims.gg{{.URL}}" target="_blank" rel="noopener">{{.Channel}}</a>
+                    <a href="https://strims.gg{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Channel}}</a>
                     <div class="count-group">
                         <span class="viewer-count">{{.Viewers}} viewers</span>
                         <span class="rustler-count">{{.Rustlers}} rustlers</span>

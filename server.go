@@ -263,6 +263,12 @@ func (bg *Server) basicAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		user, pass, ok := r.BasicAuth()
 		if !ok || user != bg.authData.UserName || pass != bg.basicAuthPass {
+			slog.Warn("basicauth failure",
+				slog.String("user", user),
+				slog.String("ip", r.RemoteAddr),
+				slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
+			)
+
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -433,7 +439,13 @@ func (bg *Server) serveData() {
 			return
 		}
 		if val.Login != bg.authData.UserName {
-			bg.logger.Warn("identity mismatch", "got", val.Login, "want", bg.authData.UserName)
+			bg.logger.Warn(
+				"identity mismatch",
+				slog.String("got", val.Login),
+				slog.String("want", bg.authData.UserName),
+				slog.String("ip", r.RemoteAddr),
+				slog.String("x-forwarded-for", r.Header.Get("X-Forwarded-For")),
+			)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
